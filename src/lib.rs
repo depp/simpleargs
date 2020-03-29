@@ -4,11 +4,11 @@
 
 use std::ffi::{OsStr, OsString};
 
+pub mod arg;
 mod error;
-mod arg;
 
+use arg::{ArgString, ParsedArg};
 pub use error::UsageError;
-use arg::{parse_arg, ParsedArg};
 
 /// A stream of arguments.
 pub struct Args<T> {
@@ -54,7 +54,7 @@ where
             Some(arg) => arg,
         };
         let arg = if allow_options {
-            match parse_arg(arg) {
+            match arg.parse_arg() {
                 Ok(x) => x,
                 Err(arg) => return Err(UsageError::InvalidArgument { arg }),
             }

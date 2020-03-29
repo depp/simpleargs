@@ -1,4 +1,12 @@
+//! Low-level argument parsing.
+
 use std::ffi::OsString;
+
+/// Trait for string types that can be parsed as command-line arguments.
+pub trait ArgString: Sized {
+    /// Parse the string as a command-line argument. On failure, returns the input.
+    fn parse_arg(self) -> Result<ParsedArg<Self>, Self>;
+}
 
 fn is_arg_name(c: char) -> bool {
     match c {
@@ -7,113 +15,194 @@ fn is_arg_name(c: char) -> bool {
     }
 }
 
-pub fn parse_arg(arg: OsString) -> Result<ParsedArg, OsString> {
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
-    let bytes = arg.as_bytes();
-    if bytes.len() < 2 || bytes[0] != b'-' {
-        return Ok(ParsedArg::Positional(arg));
+impl ArgString for String {
+    fn parse_arg(self) -> Result<ParsedArg<String>, String> {
+        let mut chars = self.chars();
+        match chars.next() {
+            Some('-') => (),
+            _ => return Ok(ParsedArg::Positional(self)),
+        }
+        let cur = chars.clone();
+        match chars.next() {
+            Some('-') => {
+                if chars.as_str().is_empty() {
+                    return Ok(ParsedArg::EndOfFlags);
+                }
+            }
+            Some(_) => chars = cur,
+            None => return Ok(ParsedArg::Positional(self)),
+        }
+        let body = chars.as_str();
+        let (name, value) = match body.find('=') {
+            Some(idx) => (&body[..idx], Some(&body[idx + 1..])),
+            None => (body, None),
+        };
+        if name.is_empty() || !name.chars().all(is_arg_name) {
+            return Err(self);
+        }
+        Ok(ParsedArg::Named(name.to_owned(), value.map(str::to_owned)))
     }
-    let body = if bytes[1] != b'-' {
-        &bytes[1..]
-    } else if bytes.len() == 2 {
-        return Ok(ParsedArg::EndOfFlags);
-    } else {
-        &bytes[2..]
-    };
-    let (name, value) = match body.iter().position(|&c| c == b'=') {
-        None => (body, None),
-        Some(idx) => (&body[..idx], Some(&body[idx + 1..])),
-    };
-    if name.len() == 0
-        || name[0] == b'-'
-        || name[name.len() - 1] == b'-'
-        || !name.iter().all(|&c| is_arg_name(c as char))
-    {
-        return Err(arg);
-    }
-    let name = Vec::from(name);
-    let name = unsafe { String::from_utf8_unchecked(name) };
-    let value = value.map(|v| OsString::from_vec(Vec::from(v)));
-    Ok(ParsedArg::Named(name, value))
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ParsedArg {
-    Positional(OsString),            // A positional argument.
-    EndOfFlags,                      // The "--" argument.
-    Named(String, Option<OsString>), // A named option -opt or -opt=value.
+impl ArgString for OsString {
+    fn parse_arg(self) -> Result<ParsedArg<OsString>, OsString> {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let bytes = self.as_bytes();
+        if bytes.len() < 2 || bytes[0] != b'-' {
+            return Ok(ParsedArg::Positional(self));
+        }
+        let body = if bytes[1] != b'-' {
+            &bytes[1..]
+        } else if bytes.len() == 2 {
+            return Ok(ParsedArg::EndOfFlags);
+        } else {
+            &bytes[2..]
+        };
+        let (name, value) = match body.iter().position(|&c| c == b'=') {
+            None => (body, None),
+            Some(idx) => (&body[..idx], Some(&body[idx + 1..])),
+        };
+        if name.len() == 0
+            || name[0] == b'-'
+            || name[name.len() - 1] == b'-'
+            || !name.iter().all(|&c| is_arg_name(c as char))
+        {
+            return Err(self);
+        }
+        let name = Vec::from(name);
+        let name = unsafe { String::from_utf8_unchecked(name) };
+        let value = value.map(|v| OsString::from_vec(Vec::from(v)));
+        Ok(ParsedArg::Named(name, value))
+    }
+}
+
+/// A single command-line argument which has been parsed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedArg<T> {
+    /// A positional argument.
+    Positional(T),
+    /// The "--" argument.
+    EndOfFlags,
+    /// A named option, such as "-opt" or "-opt=value".
+    ///
+    /// The leading dashes are removed from the name.
+    Named(String, Option<T>),
+}
+
+impl<T> ParsedArg<T> {
+    /// Map a `ParsedArg<T>` to a `ParsedArg<U>` by applying a function to the inner value.
+    pub fn map<U, F>(self, f: F) -> ParsedArg<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        match self {
+            ParsedArg::Positional(x) => ParsedArg::Positional(f(x)),
+            ParsedArg::EndOfFlags => ParsedArg::EndOfFlags,
+            ParsedArg::Named(x, y) => ParsedArg::Named(x, y.map(f)),
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::ascii::escape_default;
     use std::ffi::OsStr;
-    use std::fmt;
+    use std::fmt::Debug;
     use std::os::unix::ffi::OsStrExt;
-
-    struct Str<'a>(&'a [u8]);
-
-    impl<'a> fmt::Display for Str<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            match std::str::from_utf8(self.0) {
-                Ok(s) => fmt::Debug::fmt(s, f),
-                _ => {
-                    let mut s = String::new();
-                    s.push_str("b\"");
-                    for &b in self.0.iter() {
-                        for c in escape_default(b) {
-                            s.push(c as char);
-                        }
-                    }
-                    s.push('"');
-                    f.write_str(&s)
-                }
-            }
-        }
-    }
 
     fn osstr(s: &[u8]) -> OsString {
         OsString::from(OsStr::from_bytes(s))
     }
 
-    #[test]
-    fn parse_success() {
-        use ParsedArg::*;
-        let cases: &[(&[u8], ParsedArg)] = &[
-            (b"abc", Positional(osstr(b"abc"))),
-            (b"", Positional(osstr(b""))),
-            (b"-", Positional(osstr(b"-"))),
-            (b"--", EndOfFlags),
-            (b"-a", Named("a".to_owned(), None)),
-            (b"--a", Named("a".to_owned(), None)),
-            (b"-a=", Named("a".to_owned(), Some(osstr(b"")))),
-            (b"--a=", Named("a".to_owned(), Some(osstr(b"")))),
-            (b"--arg-name", Named("arg-name".to_owned(), None)),
-            (b"--ARG_NAME", Named("ARG_NAME".to_owned(), None)),
-            (
-                b"--opt=value",
-                Named("opt".to_owned(), Some(osstr(b"value"))),
-            ),
-        ];
-        let mut success = true;
-        for (input, expected) in cases.iter() {
-            match parse_arg(osstr(input)) {
+    struct Case<T>(T, ParsedArg<T>);
+
+    impl<T> Case<T> {
+        fn map<F, U>(self, f: F) -> Case<U>
+        where
+            F: Fn(T) -> U,
+        {
+            let Case(input, output) = self;
+            Case(f(input), output.map(f))
+        }
+    }
+
+    impl<T: Debug + Clone + ArgString + PartialEq<T>> Case<T> {
+        fn test(&self) -> bool {
+            let Case(input, expected) = self;
+            match input.clone().parse_arg() {
                 Ok(arg) => {
                     if &arg != expected {
-                        success = false;
                         eprintln!(
-                            "parse_arg({}): got {:?}, expect {:?}",
-                            Str(input),
-                            expected,
-                            arg
+                            "{:?}.parse_arg(): got {:?}, expect {:?}",
+                            input, expected, arg
                         );
+                        false
+                    } else {
+                        true
                     }
                 }
-                Err(e) => {
-                    success = false;
-                    eprintln!("parse_arg({}): got error {:?}", Str(input), e);
+                Err(_) => {
+                    eprintln!("{:?}.parse_arg(): got error, expect {:?}", input, expected);
+                    false
                 }
+            }
+        }
+    }
+
+    fn success_cases() -> Vec<Case<String>> {
+        let mut cases = vec![
+            Case("abc", ParsedArg::Positional("abc")),
+            Case("", ParsedArg::Positional("")),
+            Case("-", ParsedArg::Positional("-")),
+            Case("--", ParsedArg::EndOfFlags),
+            Case("-a", ParsedArg::Named("a".to_owned(), None)),
+            Case("--a", ParsedArg::Named("a".to_owned(), None)),
+            Case("-a=", ParsedArg::Named("a".to_owned(), Some(""))),
+            Case("--a=", ParsedArg::Named("a".to_owned(), Some(""))),
+            Case("--arg-name", ParsedArg::Named("arg-name".to_owned(), None)),
+            Case("--ARG_NAME", ParsedArg::Named("ARG_NAME".to_owned(), None)),
+            Case(
+                "--opt=value",
+                ParsedArg::Named("opt".to_owned(), Some("value")),
+            ),
+        ];
+        cases.drain(..).map(|c| c.map(str::to_owned)).collect()
+    }
+
+    struct Fail<T>(T);
+
+    impl<T: Debug + Clone + ArgString + PartialEq<T>> Fail<T> {
+        fn test(&self) -> bool {
+            let Fail(input) = self;
+            match input.clone().parse_arg() {
+                Ok(arg) => {
+                    eprintln!("{:?}.parse_arg(): got {:?}, expect error", input, arg);
+                    false
+                }
+                Err(e) => {
+                    if &e != input {
+                        eprintln!(
+                            "{:?}.parse_arg(): got error {:?}, expect error {:?}",
+                            input, e, input
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                }
+            }
+        }
+    }
+
+    const FAIL_CASES: &'static [&'static str] =
+        &["-\0", "--\n", "--\0=", "-=", "--=", "-=value", "--=xyz"];
+
+    #[test]
+    fn parse_string_success() {
+        let mut success = true;
+        for case in success_cases().drain(..) {
+            if !case.test() {
+                success = false;
             }
         }
         if !success {
@@ -122,27 +211,53 @@ mod test {
     }
 
     #[test]
-    fn parse_failure() {
-        let cases: &[&[u8]] = &[b"-=", b"--=xyz"];
+    fn parse_osstring_success() {
         let mut success = true;
-        for input in cases.iter() {
-            match parse_arg(osstr(input)) {
-                Ok(arg) => {
-                    success = false;
-                    eprintln!("parse_arg({}): got {:?}, expect error", Str(input), arg,);
-                }
-                Err(e) => {
-                    let expected = osstr(input);
-                    if e != expected {
-                        success = false;
-                        eprintln!(
-                            "parse_arg({}): got error {:?}, expect error {:?}",
-                            Str(input),
-                            e,
-                            expected
-                        );
-                    }
-                }
+        let mut cases: Vec<Case<OsString>> = success_cases()
+            .drain(..)
+            .map(|c| c.map(OsString::from))
+            .collect();
+        cases.push(Case(
+            osstr(b"\x80\xff"),
+            ParsedArg::Positional(osstr(b"\x80\xff")),
+        ));
+        cases.push(Case(
+            osstr(b"--opt=\xff"),
+            ParsedArg::Named("opt".to_owned(), Some(osstr(b"\xff"))),
+        ));
+        for case in cases.drain(..) {
+            if !case.test() {
+                success = false;
+            }
+        }
+        if !success {
+            panic!("failed");
+        }
+    }
+
+    #[test]
+    fn parse_string_failure() {
+        let mut success = true;
+        for &input in FAIL_CASES.iter() {
+            if !Fail(input.to_owned()).test() {
+                success = false;
+            }
+        }
+        if !success {
+            panic!("failed");
+        }
+    }
+
+    #[test]
+    fn parse_osstring_failure() {
+        let mut success = true;
+        let mut cases: Vec<OsString> = FAIL_CASES
+            .iter()
+            .map(|&s| OsString::from(s.to_owned()))
+            .collect();
+        for input in cases.drain(..) {
+            if !Fail(input).test() {
+                success = false;
             }
         }
         if !success {

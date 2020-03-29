@@ -2,7 +2,6 @@
 
 #![deny(missing_docs)]
 
-use std::env;
 use std::ffi::{OsStr, OsString};
 
 mod error;
@@ -12,12 +11,12 @@ pub use error::UsageError;
 use parse::{parse_arg, ParsedArg};
 
 /// A stream of arguments.
-pub struct Args {
-    args: env::ArgsOs,
+pub struct Args<T> {
+    args: T,
     allow_options: bool,
 }
 
-impl Args {
+impl<T> Args<T> {
     /// Create an argument stream from an argument iterator. The program name should not be included
     /// in the argument stream.
     ///
@@ -30,17 +29,22 @@ impl Args {
     ///     let args = Args::from_args(args_os);
     /// }
     /// ```
-    pub fn from_args(args: env::ArgsOs) -> Self {
+    pub fn from_args(args: T) -> Self {
         Args {
             args,
             allow_options: true,
         }
     }
+}
 
+impl<T> Args<T>
+where
+    T: Iterator<Item = OsString>,
+{
     /// Get the next argument in the stream.
     ///
     /// This consumes the stream. The remainder of the stream must be taken from the result.
-    pub fn next(self) -> Result<Arg, UsageError> {
+    pub fn next(self) -> Result<Arg<T>, UsageError> {
         let Args {
             mut args,
             allow_options,
@@ -82,13 +86,13 @@ impl Args {
 }
 
 /// A named command-line argument.
-pub struct NamedArgument {
+pub struct NamedArgument<T> {
     option: String,
     option_value: Option<OsString>,
-    args: env::ArgsOs,
+    args: T,
 }
 
-impl NamedArgument {
+impl<T> NamedArgument<T> {
     /// The argument name, without leading dashes.
     ///
     /// For example, in "--out=xyz", the argument name is "out".
@@ -96,8 +100,20 @@ impl NamedArgument {
         self.option.as_ref()
     }
 
+    /// Return an error for an unknown argument.
+    pub fn unknown(self) -> UsageError {
+        UsageError::UnknownOption {
+            option: self.option,
+        }
+    }
+}
+
+impl<T> NamedArgument<T>
+where
+    T: Iterator<Item = OsString>,
+{
     /// Consume the argument value as an OsStr.
-    pub fn value_osstr(self) -> Result<(String, OsString, Args), UsageError> {
+    pub fn value_osstr(self) -> Result<(String, OsString, Args<T>), UsageError> {
         let NamedArgument {
             option,
             option_value,
@@ -121,10 +137,10 @@ impl NamedArgument {
     }
 
     /// Consume the argument value by parsing an OsStr.
-    pub fn parse_osstr<T, F: FnOnce(&OsStr) -> Option<T>>(
+    pub fn parse_osstr<U, F: FnOnce(&OsStr) -> Option<U>>(
         self,
         f: F,
-    ) -> Result<(String, T, Args), UsageError> {
+    ) -> Result<(String, U, Args<T>), UsageError> {
         let (option, value, rest) = self.value_osstr()?;
         match f(value.as_ref()) {
             None => Err(UsageError::OptionInvalidValue { option, value }),
@@ -133,20 +149,20 @@ impl NamedArgument {
     }
 
     /// Consume the argument value as a string.
-    pub fn value_str(self) -> Result<(String, String, Args), UsageError> {
+    pub fn value_str(self) -> Result<(String, String, Args<T>), UsageError> {
         self.parse_osstr(|s| s.to_str().map(String::from))
     }
 
     /// Consume the argument value by parsing a string.
-    pub fn parse_str<T, F: FnOnce(&str) -> Option<T>>(
+    pub fn parse_str<U, F: FnOnce(&str) -> Option<U>>(
         self,
         f: F,
-    ) -> Result<(String, T, Args), UsageError> {
+    ) -> Result<(String, U, Args<T>), UsageError> {
         self.parse_osstr(|s| s.to_str().and_then(|s| f(String::from(s).as_str())))
     }
 
     /// Consume the argument, returning an error if it has an associated value.
-    pub fn no_value(self) -> Result<(String, Args), UsageError> {
+    pub fn no_value(self) -> Result<(String, Args<T>), UsageError> {
         let NamedArgument {
             option,
             option_value,
@@ -163,21 +179,14 @@ impl NamedArgument {
             },
         ))
     }
-
-    /// Return an error for an unknown argument.
-    pub fn unknown(self) -> UsageError {
-        UsageError::UnknownOption {
-            option: self.option,
-        }
-    }
 }
 
 /// A single argument in a stream of arguments.
-pub enum Arg {
+pub enum Arg<T> {
     /// A positional argument.
-    Positional(OsString, Args),
+    Positional(OsString, Args<T>),
     /// A named argument, possibly with an associated value.
-    Named(NamedArgument),
+    Named(NamedArgument<T>),
     /// End of the argument stream.
     End,
 }

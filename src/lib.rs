@@ -5,10 +5,10 @@
 use std::ffi::{OsStr, OsString};
 
 mod error;
-mod parse;
+mod arg;
 
 pub use error::UsageError;
-use parse::{parse_arg, ParsedArg};
+use arg::{parse_arg, ParsedArg};
 
 /// A stream of arguments.
 pub struct Args<T> {

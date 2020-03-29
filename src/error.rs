@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fmt;
 
 /// A command-line usage error, for when the user has passed incorrect arguments to the program.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsageError {
     /// Indicates an argument has invalid syntax. Used for arguments which cannot be parsed.
     InvalidArgument {

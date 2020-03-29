@@ -126,8 +126,9 @@ impl Args {
     ///
     /// ```
     /// use std::env;
+    /// use simpleargs::Args;
     /// fn main() {
-    ///     let args_os = env::args_os();
+    ///     let mut args_os = env::args_os();
     ///     args_os.next(); // Discard program name.
     ///     let args = Args::from_args(args_os);
     /// }

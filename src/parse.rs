@@ -1,4 +1,3 @@
-use crate::error::UsageError;
 use std::ffi::OsString;
 
 fn is_arg_name(c: char) -> bool {
@@ -8,7 +7,7 @@ fn is_arg_name(c: char) -> bool {
     }
 }
 
-pub fn parse_arg(arg: OsString) -> Result<ParsedArg, UsageError> {
+pub fn parse_arg(arg: OsString) -> Result<ParsedArg, OsString> {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     let bytes = arg.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'-' {
@@ -30,7 +29,7 @@ pub fn parse_arg(arg: OsString) -> Result<ParsedArg, UsageError> {
         || name[name.len() - 1] == b'-'
         || !name.iter().all(|&c| is_arg_name(c as char))
     {
-        return Err(UsageError::InvalidArgument { arg });
+        return Err(arg);
     }
     let name = Vec::from(name);
     let name = unsafe { String::from_utf8_unchecked(name) };
@@ -124,32 +123,20 @@ mod test {
 
     #[test]
     fn parse_failure() {
-        let cases: &[(&[u8], UsageError)] = &[
-            (b"-=", UsageError::InvalidArgument { arg: osstr(b"-=") }),
-            (
-                b"--=xyz",
-                UsageError::InvalidArgument {
-                    arg: osstr(b"--=xyz"),
-                },
-            ),
-        ];
+        let cases: &[&[u8]] = &[b"-=", b"--=xyz"];
         let mut success = true;
-        for (input, expected) in cases.iter() {
+        for input in cases.iter() {
             match parse_arg(osstr(input)) {
                 Ok(arg) => {
                     success = false;
-                    eprintln!(
-                        "parse_arg({}): got {:?}, expect error {:?}",
-                        Str(input),
-                        arg,
-                        expected
-                    );
+                    eprintln!("parse_arg({}): got {:?}, expect error", Str(input), arg,);
                 }
                 Err(e) => {
-                    if &e != expected {
+                    let expected = osstr(input);
+                    if e != expected {
                         success = false;
                         eprintln!(
-                            "parse_arg({}): got {:?}, expect {:?}",
+                            "parse_arg({}): got error {:?}, expect error {:?}",
                             Str(input),
                             e,
                             expected

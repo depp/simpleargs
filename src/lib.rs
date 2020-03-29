@@ -54,7 +54,10 @@ where
             Some(arg) => arg,
         };
         let arg = if allow_options {
-            parse_arg(arg)?
+            match parse_arg(arg) {
+                Ok(x) => x,
+                Err(arg) => return Err(UsageError::InvalidArgument { arg }),
+            }
         } else {
             ParsedArg::Positional(arg)
         };

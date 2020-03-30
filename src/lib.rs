@@ -75,7 +75,7 @@ mod error;
 
 use std::ffi::OsStr;
 
-use arg::{ArgString, ParsedArg};
+pub use arg::{ArgString, ParsedArg};
 pub use error::{OptionError, UsageError};
 
 /// A stream of arguments.

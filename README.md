@@ -6,7 +6,7 @@ You write your own parser which iterates over the arguments. SimpleArgs interpre
 
 ## Example
 
-```
+```rust
 use simpleargs::{Arg, Args, UsageError, OptionError};
 use std::ffi::OsString;
 use std::str::FromStr;

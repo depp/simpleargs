@@ -1,67 +1,107 @@
-use std::ffi::OsString;
-use std::fmt;
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
+
+/// An error for an invalid named argument.
+#[derive(Debug)]
+pub enum OptionError {
+    /// The named argument is unrecognized.
+    ///
+    /// For example, the user passed `--xyz` to the program, but there is no option named `"xyz"`.
+    Unknown,
+
+    /// The named argument requires a parameter, but no parameter was supplied.
+    ///
+    /// For example, the program accepts `--output=<file>`, but an argument was passed as `--output`
+    /// with no parameter.
+    MissingParameter,
+
+    /// The named argument does not accept a parameter, but one was supplied.
+    ///
+    /// For example, the program accepts `--verbose`, but an argument was passed as `--verbose=3`.
+    UnexpectedParameter,
+
+    /// The named argument was passed a value which is not valid unicode.
+    InvalidUnicode,
+
+    /// The value for the named argument was invalid.
+    ///
+    /// For example, the program accepts `--jobs=<N>` with integer N, but the user passed in
+    /// `--jobs=xyz`.
+    InvalidValue(Box<dyn Error>),
+}
+
+impl<T> From<T> for OptionError
+where
+    T: Error + 'static,
+{
+    fn from(x: T) -> OptionError {
+        OptionError::InvalidValue(Box::new(x))
+    }
+}
 
 /// A command-line usage error, for when the user has passed incorrect arguments to the program.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UsageError {
+#[derive(Debug)]
+pub enum UsageError<T> {
     /// Indicates an argument has invalid syntax. Used for arguments which cannot be parsed.
     InvalidArgument {
         /// Full text of the argument.
-        arg: OsString,
+        arg: T,
     },
+
     /// Indicates an argument was unexpected. Used for positional arguments.
     UnexpectedArgument {
         /// Full text of the argument.
-        arg: OsString,
+        arg: T,
     },
+
     /// Indicates an expected positional argument was missing.
     MissingArgument {
         /// The name of the argument.
         name: String,
     },
-    /// Indicates that a named option was unrecognized.
-    UnknownOption {
-        /// The name of the option, without leading dashes.
-        option: String,
-    },
-    /// Indicates that a named option requires a parameter, but no parameter was supplied.
-    OptionMissingParameter {
-        /// The name of the option, without leading dashes.
-        option: String,
-    },
-    /// Indicates that a named option does not take a parameter, but one was supplied anyway.
-    OptionUnexpectedParameter {
-        /// The name of the option, without leading dashes.
-        option: String,
-    },
-    /// Indicates that the parameter for a named option could not be parsed or was invalid.
-    OptionInvalidValue {
-        /// The name of the option, without leading dashes.
-        option: String,
-        /// The parameter value which could not be parsed.
-        value: OsString,
-    },
-    /// A free-form usage error string.
-    Custom {
-        /// The error text.
-        text: String,
+
+    /// Indicates an invalid named argument.
+    InvalidOption {
+        /// The name of the option without any leading dashes.
+        name: String,
+        /// The option parameter value, if it exists.
+        value: Option<T>,
+        /// The inner error from parsing the option.
+        err: OptionError,
     },
 }
 
-impl fmt::Display for UsageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use UsageError::*;
+impl<T> Display for UsageError<T>
+where
+    T: Debug,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
-            InvalidArgument { arg } => write!(f, "invalid argument {:?}", arg),
-            UnexpectedArgument { arg } => write!(f, "unexpected argument {:?}", arg),
-            MissingArgument { name } => write!(f, "missing argument <{}>", name),
-            UnknownOption { option } => write!(f, "unknown option -{}", option),
-            OptionMissingParameter { option } => write!(f, "option -{} requires parameter", option),
-            OptionUnexpectedParameter { option } => write!(f, "unknown option {:?}", option),
-            OptionInvalidValue { option, value } => {
-                write!(f, "invalid value for -{}: {:?}", option, value)
-            }
-            Custom { text } => f.write_str(text),
+            UsageError::InvalidArgument { arg } => write!(f, "invalid argument {:?}", arg),
+            UsageError::UnexpectedArgument { arg } => write!(f, "unexpected argument {:?}", arg),
+            UsageError::MissingArgument { name } => write!(f, "missing argument <{}>", name),
+            UsageError::InvalidOption { name, value, err } => match err {
+                OptionError::Unknown => write!(f, "unknown option -{}", name),
+                OptionError::MissingParameter => write!(f, "option -{} requires a parameter", name),
+                OptionError::UnexpectedParameter => {
+                    write!(f, "option -{} does not accept a parameter", name)
+                }
+                OptionError::InvalidUnicode => write!(
+                    f,
+                    "invalid value {:?} for option -{}: invalid Unicode string",
+                    value.as_ref().unwrap(),
+                    name
+                ),
+                OptionError::InvalidValue(err) => write!(
+                    f,
+                    "invalid value {:?} for option -{}: {}",
+                    value.as_ref().unwrap(),
+                    name,
+                    err
+                ),
+            },
         }
     }
 }
+
+impl<T> Error for UsageError<T> where T: Debug {}

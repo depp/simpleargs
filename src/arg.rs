@@ -1,11 +1,19 @@
 //! Low-level argument parsing.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 /// Trait for string types that can be parsed as command-line arguments.
 pub trait ArgString: Sized {
-    /// Parse the string as a command-line argument. On failure, returns the input.
+    /// Parse the string as a command-line argument.
+    ///
+    /// On failure, return the input.
     fn parse_arg(self) -> Result<ParsedArg<Self>, Self>;
+
+    /// Convert the argument into a str if it is a valid Unicode string.
+    fn to_str(&self) -> Option<&str>;
+
+    /// Convert the argument into an OsStr.
+    fn to_osstr(&self) -> &OsStr;
 }
 
 fn is_arg_name(c: char) -> bool {
@@ -42,6 +50,14 @@ impl ArgString for String {
         }
         Ok(ParsedArg::Named(name.to_owned(), value.map(str::to_owned)))
     }
+
+    fn to_str(&self) -> Option<&str> {
+        Some(self)
+    }
+
+    fn to_osstr(&self) -> &OsStr {
+        self.as_ref()
+    }
 }
 
 impl ArgString for OsString {
@@ -73,6 +89,14 @@ impl ArgString for OsString {
         let name = unsafe { String::from_utf8_unchecked(name) };
         let value = value.map(|v| OsString::from_vec(Vec::from(v)));
         Ok(ParsedArg::Named(name, value))
+    }
+
+    fn to_str(&self) -> Option<&str> {
+        OsStr::to_str(self)
+    }
+
+    fn to_osstr(&self) -> &OsStr {
+        self
     }
 }
 

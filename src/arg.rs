@@ -62,8 +62,8 @@ impl ArgString for String {
 
 impl ArgString for OsString {
     fn parse_arg(self) -> Result<ParsedArg<OsString>, OsString> {
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-        let bytes = self.as_bytes();
+        use os_str_bytes::{OsStrBytes, OsStringBytes};
+        let bytes = self.to_bytes();
         if bytes.len() < 2 || bytes[0] != b'-' {
             return Ok(ParsedArg::Positional(self));
         }
@@ -87,7 +87,7 @@ impl ArgString for OsString {
         }
         let name = Vec::from(name);
         let name = unsafe { String::from_utf8_unchecked(name) };
-        let value = value.map(|v| OsString::from_vec(Vec::from(v)));
+        let value = value.map(|v| unsafe { OsString::from_bytes_unchecked(v) });
         Ok(ParsedArg::Named(name, value))
     }
 

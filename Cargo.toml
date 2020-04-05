@@ -19,3 +19,4 @@ keywords = [
 [lib]
 
 [dependencies]
+os_str_bytes = "1.0"
